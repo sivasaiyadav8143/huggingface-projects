@@ -14,87 +14,151 @@ license: mit
 
 An intelligent chatbot that allows you to upload PDF documents and ask questions about their content using Retrieval-Augmented Generation (RAG).
 
-## 🌟 Features
+## 🔧 Technical Workflow
 
-- **PDF Upload & Processing**: Extract text from any PDF document
-- **Semantic Search**: Find relevant information using sentence embeddings
-- **Conversational Interface**: Ask questions naturally and get accurate answers
-- **Source-Based Responses**: Answers are grounded in your document content
-- **Clean UI**: Built with Gradio for an intuitive user experience
+### Step 1 — PDF Ingestion
+- User uploads a `.pdf` file via the Gradio UI
+- `PyPDF2.PdfReader` iterates through every page and extracts raw text into a single string
 
-## 🚀 How It Works
+### Step 2 — Text Chunking
+- The raw text is split into overlapping chunks of **500 words** with a **50-word overlap**
+- Overlap ensures that sentences spanning chunk boundaries are not lost
+- Example:
+  ```
+  Chunk 1 → words [0 : 500]
+  Chunk 2 → words [450 : 950]   ← 50-word overlap
+  Chunk 3 → words [900 : 1400]
+  ```
 
-This application implements a RAG (Retrieval-Augmented Generation) pipeline:
+### Step 3 — Embedding Generation
+- Each chunk is passed through `sentence-transformers/all-MiniLM-L6-v2`
+- The model converts every chunk into a **384-dimensional dense vector**
+- These vectors numerically capture the semantic meaning of each chunk
 
-1. **Document Processing**: Extracts text from uploaded PDFs and splits it into manageable chunks
-2. **Embedding Creation**: Converts text chunks into vector embeddings using Sentence Transformers
-3. **Vector Storage**: Stores embeddings in a FAISS index for fast similarity search
-4. **Query Processing**: When you ask a question, it:
-   - Converts your question to an embedding
-   - Finds the most relevant chunks from the document
-   - Sends the context to an LLM (Mistral-7B) to generate an answer
+### Step 4 — FAISS Vector Indexing
+- All chunk embeddings are loaded into a **FAISS `IndexFlatL2`** index
+- FAISS stores them in memory for fast nearest-neighbor lookup
+- Both the raw chunks and their vector index are held in the `PDFChatbot` instance
 
-## 🛠️ Technical Stack
+### Step 5 — Query Processing
+- User types a question in the chat interface
+- The question is embedded using the **same SentenceTransformer model**
+- FAISS performs an **L2 (Euclidean) similarity search** to find the **top-3 most semantically relevant chunks**
 
-- **Embeddings**: `sentence-transformers/all-MiniLM-L6-v2` - Efficient model for semantic similarity
-- **Vector Database**: FAISS - Fast similarity search and clustering
-- **LLM**: Llama-3.2-1B-Instruct - Via HuggingFace Inference API (free tier)
-- **UI Framework**: Gradio - Interactive web interface
-- **PDF Processing**: PyPDF2 - Text extraction from PDFs
+### Step 6 — Prompt Construction
+- The 3 retrieved chunks are joined as context
+- A structured prompt is built:
+  ```
+  Context:
+  <retrieved chunks>
 
-## 📋 Usage
+  Question: <user question>
 
-1. **Upload a PDF**: Click the upload button and select your PDF file
-2. **Process Document**: Click "Process PDF" to analyze the document
-3. **Ask Questions**: Type your questions in the chat interface
-4. **Get Answers**: Receive contextual answers based on the document content
+  Answer:
+  ```
 
-## 💡 Example Questions
+### Step 7 — LLM Inference
+- The prompt is sent to `meta-llama/Llama-3.2-1B-Instruct` via the **HuggingFace Inference API**
+- Parameters: `max_tokens=500`, `temperature=0.7`
+- The model generates an answer strictly grounded in the provided context
+- If the answer isn't in the context, the model is instructed to say so explicitly
 
-- "What is the main topic of this document?"
-- "Can you summarize the key points?"
-- "What does it say about [specific topic]?"
-- "Are there any statistics or numbers mentioned?"
+### Step 8 — Response Delivery
+- The answer is appended to the Gradio chat history as a `(question, answer)` tuple
+- The UI re-renders the chatbot component with the updated history
+- The question input box is automatically cleared for the next query
 
-## ⚙️ Local Setup (Optional)
+---
 
-If you want to run this locally:
+## 🗺️ End-to-End Flow Diagram
+
+```
+┌─────────────┐
+│  PDF Upload  │
+└──────┬──────┘
+       │ PyPDF2
+       ▼
+┌─────────────┐
+│  Raw Text   │
+└──────┬──────┘
+       │ chunk_text()
+       ▼
+┌──────────────────┐
+│  Text Chunks     │  (500 words, 50-word overlap)
+└──────┬───────────┘
+       │ SentenceTransformer
+       ▼
+┌──────────────────┐
+│  Embeddings      │  (384-dim vectors)
+└──────┬───────────┘
+       │ FAISS IndexFlatL2
+       ▼
+┌──────────────────┐
+│  Vector Index    │  ◄─────────────────────────┐
+└──────────────────┘                             │
+                                                 │
+┌─────────────┐                                  │
+│ User Query  │                                  │
+└──────┬──────┘                                  │
+       │ SentenceTransformer                     │
+       ▼                                         │
+┌──────────────────┐    L2 Search                │
+│ Query Embedding  │ ────────────────────────────┘
+└──────────────────┘
+       │ Top-3 chunks
+       ▼
+┌──────────────────┐
+│  Prompt Builder  │
+└──────┬───────────┘
+       │ HuggingFace Inference API
+       ▼
+┌──────────────────────────┐
+│  Llama-3.2-1B-Instruct   │
+└──────┬───────────────────┘
+       │
+       ▼
+┌──────────────┐
+│   Answer     │  → Gradio Chat UI
+└──────────────┘
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Tool |
+|---|---|
+| PDF Parsing | PyPDF2 |
+| Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
+| Vector Store | FAISS (IndexFlatL2) |
+| LLM | meta-llama/Llama-3.2-1B-Instruct |
+| LLM API | HuggingFace Inference API |
+| UI Framework | Gradio |
+
+---
+
+## ⚙️ Setup & Run
 
 ```bash
-# Clone the repository
-git clone https://huggingface.co/spaces/SivaSai8143/pdf-rag-chatbot
-cd pdf-rag-chatbot
-
 # Install dependencies
-pip install -r requirements.txt
+pip install gradio PyPDF2 sentence-transformers faiss-cpu numpy huggingface_hub
 
-# Run the application
+# Set your HuggingFace API key
+export HF_API_KEY=your_api_key_here
+
+# Run the app
 python app.py
 ```
 
-## 🎯 Use Cases
+---
 
-- Research paper analysis
-- Legal document review
-- Technical documentation Q&A
-- Educational material exploration
-- Business report summarization
+## ⚠️ Known Limitations
 
-## 📝 Limitations
+- **In-memory only** — FAISS index is lost on server restart; no persistence layer
+- **Single-user design** — one global chatbot instance; concurrent users overwrite each other's PDF
+- **Text-based PDFs only** — scanned/image PDFs without OCR will yield no extractable text
+- **Small LLM** — Llama 1B is fast and free-tier friendly but may struggle with complex reasoning tasks
 
-- Works best with text-based PDFs (not scanned images)
-- Document processing time depends on PDF size
-- Answer quality depends on the clarity of the source material
-- Uses free-tier Inference API (may have rate limits)
-
-## 🔮 Future Enhancements
-
-- [ ] Support for multiple PDFs simultaneously
-- [ ] Citation with page numbers
-- [ ] Conversation history persistence
-- [ ] Support for scanned PDFs (OCR)
-- [ ] Export chat history
-- [ ] Advanced chunking strategies
 
 ## 🤝 Contributing
 
